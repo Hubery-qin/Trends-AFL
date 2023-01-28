@@ -86,7 +86,6 @@
 #define stack_total_num 18 /* 堆栈数 */
 #define operator_gap 10 /* 算子去跟随蜂增加的时间间隙 */
 #define sta_gap 10 /*  堆栈去跟随蜂增加的时间间隙 */
-#define max_generation 1000 // 计算平均值时考虑的最大代数
 
 u64   tmp_pilot_time = 0, /* 轮回次数 */
       last_time = 0,      /* 上次写入时间 */
@@ -95,10 +94,6 @@ u64   tmp_pilot_time = 0, /* 轮回次数 */
       bingo_time = 0,  /* bingo记录时间 */
       sta_bingo_time = 0, /* 堆栈 调整去跟随蜂的间隔时间 */
       adjust_gap = 86400000000, /* 改变的时间间隔*/
-      operator_per_pick_count[operator_num],  /* 每最小回合 算子选择次数计数*/
-      sta_pick_num[wheel_num][stack_total_num], /* 每轮堆栈大小选择计数 */
-      operator_count_per_round[wheel_num][operator_num],   /*每轮算子选择次数计数*/
-      total_puppet_find = 0, /* 总有趣值 */
       sta_last_time; /* 堆栈跟随蜂计数时间 */
 
 int negative_feedback = 0, /* 算子 负反馈计数 */
@@ -106,26 +101,29 @@ int negative_feedback = 0, /* 算子 负反馈计数 */
 long long int  total_wheel = 1, /*总轮数*/
               sta_total_wheel = 1; /* 堆栈总轮数 */
 
-u8  max_multi = 12, /* 算子多群体上限 */
-    sta_multi_max = 16, /* 堆栈多群体上限 */
-    add_in_one_round = 0,  /* 算子每轮新增 */
+u8  add_in_one_round = 0,  /* 算子每轮新增 */
     sta_add_in_one_round = 0,  /* 堆栈每轮新增 */
     interesting_total_conut_per_round[wheel_num],  /* 算子每轮总有趣值计数 */
+    operator_count_per_round[wheel_num][operator_num],   /*每轮算子选择次数计数*/
     interesting_count_per_round[wheel_num][operator_num], /*每轮算子有趣值计数*/
+    operator_per_pick_count[operator_num],  /* 每最小回合 算子选择次数计数*/
     cycle_wheel = 0, /*一个迭代周期内的轮数，当进入侦察蜂阶段时会重置*/
+    total_puppet_find = 0, /* 总有趣值 */
     current_wheel = 0, /*当前的轮数，不停对wheel_num取模*/
     limit_negative = 20, /* 负反馈 跳出蜜源 上限次数 */
     groups_num, /* 群体数 */
     num_of_multi, /* 算子第几次多群体 */
+    max_multi = 8, /* 算子多群体上限 */
     max_bingo = 0, /* 算子去跟随蜂的时间 */
-    opt_first_follow = 0, // 标志算子第一次去跟随蜂的
-    sta_first_follow = 0, // 标志堆栈第一次去跟随蜂的
+
     sta_limit = 10, /* 堆栈负反馈跳出蜜源上限 */
     sta_multi_num = 0,  /* 堆栈多群体数量 */
+    sta_multi_max = 10, /* 堆栈多群体上限 */
     sta_current_wheel = 0, /* 堆栈当前轮数 */
     sta_cyc_wheel = 0, /* 堆栈迭代周期轮数 */
     sta_max_bingo = 50, /* 堆栈去跟随蜂的时间 */
     sta_temp = 0, /* 本轮堆栈大小下标 */
+    sta_pick_num[wheel_num][stack_total_num], /* 每轮堆栈大小选择计数 */
     sta_magic_num[wheel_num][stack_total_num], /* 每轮堆栈有趣值计数 */
     sta_total_magic[wheel_num], /* 每轮堆栈总有趣值计数 */
     //361,516,461,270,191,137,79,73,41,44,32,25,16,21,14,19,18,18, 16,  11, 18,17,
@@ -136,12 +134,15 @@ double  fitness[wheel_num][operator_num], /*适应度值*/
         fitness_avg[operator_num], /*各算子的平均适用度值*/
         prod[wheel_num][operator_num+2], /* 算子选择概率*/
         weight_function_exp[affected_wheels+1], /*权重函数*/
+        
         weight_function_gaus[stack_total_num], /* 高斯分布权重函数 */
         sta_fit[wheel_num][stack_total_num], /* 堆栈适应度值 */
         sta_fit_avg[stack_total_num], /* 堆栈平均值 */
         sta_prob[wheel_num][stack_total_num+2], /* 堆栈选择概率 */
-        sta_avg_time[stack_total_num], /* 该堆栈平均耗时 */
-        modern_proportion = 0.7, /*计算适应度值时，近代所占比例*/
+        sta_avg_time[stack_total_num]; /* 该堆栈平均耗时 */
+
+
+double  modern_proportion = 0.7, /*计算适应度值时，近代所占比例*/
         avg_proportion = 0.3, /* 计算适应度 均值所占比例*/
         e = 2.718281828459, /* e */
         min_proportion = 0.3, /* 侦察蜂 及 跟随蜂计算fit 最小应为均值的多少*/
@@ -158,7 +159,6 @@ s32 temp_len_puppet;
 #define STAGE_OverWrite75 15
 #define STAGE_OverWriteExtra 16
 #define STAGE_InsertExtra 17
-
 
 
 EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
@@ -403,6 +403,29 @@ enum {
   /* 04 */ FAULT_NOINST,
   /* 05 */ FAULT_NOBITS
 };
+
+// 算子概率选择算法
+int select_algorithm(int extras) {
+
+  int i;
+  int operator_number = operator_num;
+  if (extras == 0) operator_number = operator_number - 2;
+  //  srandom(time(NULL)); 和时间关联强，不是真随机
+  u32 seed[2];
+  ck_read(dev_urandom_fd, &seed, sizeof(seed), "/dev/urandom");
+  srandom(seed[0]);
+  double  sele = ((double)(random()%10000)*0.0001); /*轮盘随机值*/
+
+  // 轮盘赌
+  for (i = 1; i <= operator_number; i++)
+  {
+    if (sele >= prod[current_wheel][i-1] && sele < prod[current_wheel][i])
+    {
+      return i-1;
+    }
+  }
+  return 0;
+}
 
 
 /* Get unix time in milliseconds */
@@ -3577,6 +3600,60 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
 
 }
 
+/* 更新实验文件 */
+static void record_experimental_data() {
+
+  /* Fields in the file:
+     unix_time, cycles_done, cur_path, paths_total, paths_not_fuzzed,
+     favored_not_fuzzed, unique_crashes, unique_hangs, max_depth,
+     execs_per_sec 
+     unix时间，周期done，当前路径，路径总数，路径不模糊，首选不模糊，
+     唯一崩溃，唯一挂起，最大挂起，执行次数per_sec
+     */
+
+  // fprintf(experimental_data, "# unix_time, tmp_pilot_time, add_in_one_round, total_puppet_find, operator_count_per_round\n");
+  fprintf(experimental_data, 
+          "当前时间: %llu, 轮回次数: %llu, 每轮新增: %d, total: %d,\
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \
+          choose: %d, interesting:  %d,  fitness: %lf, fitness_avg: %lf, prod: %lf, \n",
+          get_cur_time() / 1000, tmp_pilot_time, add_in_one_round, total_puppet_find, 
+          operator_count_per_round[current_wheel][0],interesting_count_per_round[current_wheel][0],fitness[current_wheel][0],fitness_avg[0],prod[(current_wheel+1)%wheel_num][1],
+          operator_count_per_round[current_wheel][1],interesting_count_per_round[current_wheel][1],fitness[current_wheel][1],fitness_avg[1],prod[(current_wheel+1)%wheel_num][2],
+          operator_count_per_round[current_wheel][2],interesting_count_per_round[current_wheel][2],fitness[current_wheel][2],fitness_avg[2],prod[(current_wheel+1)%wheel_num][3],
+          operator_count_per_round[current_wheel][3],interesting_count_per_round[current_wheel][3],fitness[current_wheel][3],fitness_avg[3],prod[(current_wheel+1)%wheel_num][4],
+          operator_count_per_round[current_wheel][4],interesting_count_per_round[current_wheel][4],fitness[current_wheel][4],fitness_avg[4],prod[(current_wheel+1)%wheel_num][5],
+          operator_count_per_round[current_wheel][5],interesting_count_per_round[current_wheel][5],fitness[current_wheel][5],fitness_avg[5],prod[(current_wheel+1)%wheel_num][6],
+          operator_count_per_round[current_wheel][6],interesting_count_per_round[current_wheel][6],fitness[current_wheel][6],fitness_avg[6],prod[(current_wheel+1)%wheel_num][7],
+          operator_count_per_round[current_wheel][7],interesting_count_per_round[current_wheel][7],fitness[current_wheel][7],fitness_avg[7],prod[(current_wheel+1)%wheel_num][8],
+          operator_count_per_round[current_wheel][8],interesting_count_per_round[current_wheel][8],fitness[current_wheel][8],fitness_avg[8],prod[(current_wheel+1)%wheel_num][9],
+          operator_count_per_round[current_wheel][9],interesting_count_per_round[current_wheel][9],fitness[current_wheel][9],fitness_avg[9],prod[(current_wheel+1)%wheel_num][10],
+          operator_count_per_round[current_wheel][10],interesting_count_per_round[current_wheel][10],fitness[current_wheel][10],fitness_avg[10],prod[(current_wheel+1)%wheel_num][11],
+          operator_count_per_round[current_wheel][11],interesting_count_per_round[current_wheel][11],fitness[current_wheel][11],fitness_avg[11],prod[(current_wheel+1)%wheel_num][12],
+          operator_count_per_round[current_wheel][12],interesting_count_per_round[current_wheel][12],fitness[current_wheel][12],fitness_avg[12],prod[(current_wheel+1)%wheel_num][13],
+          operator_count_per_round[current_wheel][13],interesting_count_per_round[current_wheel][13],fitness[current_wheel][13],fitness_avg[13],prod[(current_wheel+1)%wheel_num][14],
+          operator_count_per_round[current_wheel][14],interesting_count_per_round[current_wheel][14],fitness[current_wheel][14],fitness_avg[14],prod[(current_wheel+1)%wheel_num][15],
+          operator_count_per_round[current_wheel][15],interesting_count_per_round[current_wheel][15],fitness[current_wheel][15],fitness_avg[15],prod[(current_wheel+1)%wheel_num][16]
+          );
+
+  fflush(experimental_data);
+
+}
+
+
 /* A helper function for maybe_delete_out_dir(), deleting all prefixed
    files in a directory. */
 
@@ -6721,228 +6798,28 @@ abandon_entry:
 
 }
 
-// 算子概率选择算法
-static int select_algorithm(int extras, double p[][operator_num+2], u8 c_w) {
-
-  int i;
-  int o_n = operator_num - extras;
-
-  double sele = UR((u32)p[c_w][o_n]); /*轮盘随机值*/
-
-  // 轮盘赌
-  for (i = 1; i <= o_n; i++)
-  {
-    if (sele >= p[c_w][i-1] && sele < p[c_w][i])
-    {
-      return i-1;
-    }
-  }
-  return 0;
-
-}
-
 /*  抽出来的 概率赋值方法 */
-static void prob_assignment(double f[][operator_num], double p[][operator_num+2], int x1, int y1, int x2, int y2, int x3, int y3) {
-  p[x1][y1] = f[x2][y2] + p[x3][y3];// 概率给prod
-}
-
-/* 堆栈 侦察蜂 随机性*/
-static void scout(int total_num, double fit[][operator_num], double probability[][operator_num+2], 
-  int wheel, u8 *mul_num, u8 mul_max){
-
-  double surplus = 0; /* 总概率，应归一化为1*/
-  int i;
-  mean_prod = 1.0/total_num;
-  min_baseline = mean_prod * min_proportion;
-
-  // 先随机分配 下限 0.3 * mean_prod
-  for (i = 0; i < total_num; i++)
-  {
-    fit[wheel][i] = min_baseline * digit + (double)(UR((max_proportion-min_proportion)*mean_prod*digit));
-    surplus += fit[wheel][i]; 
-  }
-  // fprintf(experimental_data, "侦察蜂随机的概率： ");
-  
-  // 再归一化
-  for (i = 0; i < total_num; i++)
-  {
-  	fit[wheel][i] = digit * fit[wheel][i]/surplus;
-    if (unlikely(*mul_num < mul_max)) // 多群体计数
-    {
-      prob_assignment( fit, probability, wheel, i+1, wheel, i, wheel, i);
-    }else{
-      prob_assignment( fit, probability, (wheel+1)%wheel_num, i+1, wheel, i, (wheel+1)%wheel_num, i);
-    }
-  }
-  if (unlikely(*mul_num < mul_max)) // 多群体计数
-  {
-    ++(*mul_num);
-  }
-}
-
-double rand_double(u8 total_num){
-  mean_prod = 1.0/total_num;
-  min_baseline = mean_prod * min_proportion;
-  return (min_baseline + (double)(UR(digit)%((int)((max_proportion-min_proportion)*mean_prod*digit))/digit));
-}
-
-/* 堆栈 跟随蜂 */
-static void follow(u8 *c_wheel, u8 total_num, u64 round_pick[][operator_num], double fit[][operator_num],
- u8 round_magic[][operator_num], u8 *cyc_wheel, int *neg_feed, double fit_avg[operator_num],
- long long int *t_wheel, double p[][operator_num+2], u8 round_total_magic[wheel_num], u8 limit_upper){
-
-  int i, j;
-  double  total_fit_prod_fir = 0.0, /*第一次归一化和*/
-          total_fit_prod_sec = 0.0, /*第二次归一化和*/
-          offset_value = 0.0,  /*归一化补差*/
-          temp_rand; /*随机值*/
-  
-  // mean_prod = 1.0/total_num;
-  // min_baseline = mean_prod * min_proportion;
-
-  // f1 根据近代历史
-  for (i = 0; i < total_num; i++)
-  {
-    // temp_rand = min_baseline + (double)(UR(digit)%((int)((max_proportion-min_proportion)*mean_prod*digit))/digit);
-    temp_rand = rand_double(total_num);
-    if (unlikely(sta_first_follow == 1 || opt_first_follow == 1))
-    {
-      temp_rand = 1.00;
-    }
-    
-    int k = 1;
-    if (round_pick[*c_wheel][i] == 0) // 避免除0
-    {
-      round_pick[*c_wheel][i] = 1;
-    }
-    fit[*c_wheel][i] = digit * temp_rand * round_magic[*c_wheel][i] / round_pick[*c_wheel][i];
-    total_fit_prod_fir += fit[*c_wheel][i];
-    
-    for (j = 0; j < affected_wheels && j < *cyc_wheel; j++) // 侦察蜂 后开始算 一轮
-    {
-      // temp_rand = min_baseline + (double)(UR(digit)%((int)((max_proportion-min_proportion)*mean_prod*digit))/digit);
-      temp_rand = rand_double(total_num);
-      // k 是轮数组参数下标
-      k = (*c_wheel+wheel_num-j)%wheel_num;
-      if (round_pick[k][i] == 0) // 避免除0 
-      {
-        round_pick[k][i] = 1;
-      }
-      fit[*c_wheel][i] += digit * weight_function_exp[j+1] * temp_rand * round_magic[k][i] / round_pick[k][i];
-    }
-    total_fit_prod_fir += fit[*c_wheel][i];
-  }
-
-  // 本轮没有发现新东西
-  if (round_total_magic[*c_wheel] == 0 ) 
-  {
-    // 记一次 蜜源 负反馈
-    *neg_feed = *neg_feed+1;
-  }else
-  { // 发现新的东西 将当前负反馈归零
-    *neg_feed = 0;
-  }
-
-  if (total_fit_prod_fir == 0)
-  {
-    total_fit_prod_fir = 1.0; // 避免除0
-  }
-  
-  /* 归一化  f2考虑平均值 */
-  if (*neg_feed <= limit_upper) {
-    // 根据公式计算适应度
-    for (i = 0; i < total_num; i++)
-    { // 引入适度的随机性temp_rand
-      // temp_rand = min_baseline + (double)(UR(digit)%((int)((max_proportion-min_proportion)*mean_prod*digit))/digit);
-      temp_rand = rand_double(total_num);
-
-      if (unlikely(sta_first_follow == 1 || opt_first_follow == 1))
-      {
-        temp_rand = 1.00;
-      }
-
-      // 归一化
-      fit[*c_wheel][i] = digit * temp_rand * modern_proportion * fit[*c_wheel][i] / total_fit_prod_fir;
-      // 考虑历史均值
-      // temp_rand = min_baseline + (double)(UR(digit)%((int)((max_proportion-min_proportion)*mean_prod*digit))/digit);
-      temp_rand = rand_double(total_num);
-      fit[*c_wheel][i] += digit * temp_rand * fit_avg[i] * avg_proportion;
-      total_fit_prod_sec += fit[*c_wheel][i];
-    }
-    // 再次将fit归一化  同时按照上下限 调整fit
-    for (i = 0; i < total_num; i++)
-    { // 归一化
-      fit[*c_wheel][i] = digit * fit[*c_wheel][i] / total_fit_prod_sec;
-    }
-    // 拉动弱势群体
-    for (i = 0; i < total_num; i++)
-    {
-      if ( fit[*c_wheel][i] < (min_baseline * digit) ){
-        offset_value += min_baseline * digit - fit[*c_wheel][i];
-        fit[*c_wheel][i] = min_baseline * digit;
-      }
-    }
-    // 避免计算fitness_avg时，分子分母过大
-    int wheel_total = *t_wheel > max_generation ? max_generation : *t_wheel;
-    wheel_total = (wheel_total == 0 ? 1:wheel_total);
-    // 削弱过强，计算prod
-    for (i = 0; i < total_num; i++)
-    { // 削弱资源过多群体
-      if (offset_value > 0 && fit[*c_wheel][i] > (min_baseline * digit))
-      {
-        fit[*c_wheel][i] = min_baseline * digit + (fit[*c_wheel][i]-min_baseline*digit)*(1 - offset_value/digit);
-      }
-      // 计算fit_avg 平均值
-      fit_avg[i] = (fit_avg[i]*(wheel_total-1) + fit[*c_wheel][i])/wheel_total;
-      // 下一代概率即为上一代的fit，prod[][0]=0，顶部为1，记录下标从1开始
-      prob_assignment(fit, p, (*c_wheel+1)%wheel_num, i+1, *c_wheel, i, (*c_wheel+1)%wheel_num, i);
-    }
-    *cyc_wheel = *cyc_wheel+1; // 当前轮加1
-  } else { // 如果蜜源limit 到达上限 
-    // fprintf(experimental_data, "negative_feedback: %d \n",*neg_feed);
-    scout(total_num, fit, p, *c_wheel, &num_of_multi, max_multi);
-    *neg_feed = 0;
-    *cyc_wheel = 0;
-  }
-
-  if (unlikely(sta_first_follow == 1))
-  {
-    sta_first_follow = 2;
-  }
-  if (unlikely(opt_first_follow == 1))
-  {
-    opt_first_follow = 2;
-  }
-
-  // 将涉及fit 计算完后 更新 current_wheel 和 total_wheel
-  ++*t_wheel; // 总轮数加1
-  *c_wheel = (*t_wheel)%wheel_num; // 下标根据总轮 %wheel_num
-
-  //将 下一轮计数归零
-  for(int k =0;k<total_num;k++){
-    round_pick[*c_wheel][k] = 0; // 选中
-    round_magic[*c_wheel][k] = 0; // 有趣值
-  }
-
+static void prob_assignment(int x1, int y1, int x2, int y2, int x3, int y3) {
+  prod[x1][y1] = fitness[x2][y2] + prod[x3][y3];// 概率给prod
 }
 
 /*  初始化 随机的 仅一次的*/
 static void initialization() {
 
   int i,j, operator_number = operator_num;
+  u32 seed[2];
+  ck_read(dev_urandom_fd, &seed, sizeof(seed), "/dev/urandom");
+  srandom(seed[0]);
 
   if (!(extras_cnt + a_extras_cnt)){  // 如果没有token
     operator_number = operator_number - 2;
   } 
 
-  double  surplus = 0.0, sta_surplus = 0.0; /* 总概率，应归一化为1*/
+  double  surplus = 0; /* 总概率，应归一化为1*/
   mean_prod = 1.0/operator_number;
   min_baseline = mean_prod * min_proportion;
 
-  double sta_mean_prod = 1.0/stack_total_num;
-  double sta_min_baseline = sta_mean_prod * min_proportion;
-
-  // 初始化算子、堆栈概率
+  // 初始化概率prod
   for ( i = 0; i < wheel_num; i++ )
   {
     for ( j = 0; j < operator_num+2; j++)
@@ -6950,10 +6827,8 @@ static void initialization() {
       if (j == 0)
       {
         prod[i][j] = 0.0;
-        sta_prob[i][j] = 0.0;
       }else{
-        prod[i][j] = digit;
-        sta_prob[i][j] = digit;
+        prod[i][j] = 1.0;
       }
     }
   }
@@ -6963,92 +6838,221 @@ static void initialization() {
     for (i = 0; i <= affected_wheels; i++)
     {
       weight_function_exp[i] = pow(e,-(i/pow(e,2)));
+      //  weight_function[i] = pow(2.0, i*1.0);
     }
   }
 
-  // 初始化算子适应度函数 先随机分配 下限 0.3 * mean_prod
+  // 先随机分配 下限 0.3 * mean_prod
   for (i = 0; i < operator_number; i++)
   {
-    fitness[current_wheel][i] = min_baseline * digit + (double)(UR((max_proportion-min_proportion)*mean_prod*digit));
+    fitness[current_wheel][i] = min_baseline + (double)(random()%((int)((max_proportion-min_proportion)*mean_prod*digit))/digit);
     surplus += fitness[current_wheel][i]; 
   }
   // 再归一化
-  fprintf(experimental_data, "初始化算子概率： ");
+  fprintf(experimental_data, "初始化概率： ");
   for (i = 0; i < operator_number; i++)
   {
-  	fitness[current_wheel][i] = digit * fitness[current_wheel][i]/surplus;
-    
-    prob_assignment(fitness, prod, (current_wheel+1)%wheel_num, i+1, current_wheel, i, (current_wheel+1)%wheel_num, i);
-    
+  	fitness[current_wheel][i] = fitness[current_wheel][i]/surplus;
+    prob_assignment( (current_wheel+1)%wheel_num, i+1, current_wheel, i, (current_wheel+1)%wheel_num, i);
     fprintf(experimental_data, "%lf ",prod[(current_wheel+1)%wheel_num][i+1]);
   }
   fprintf(experimental_data, "\n ");
 
-
-  // 初始化算子适应度函数 先随机分配 下限 0.3 * sta_mean_prod
-  for (i = 0; i < stack_total_num; i++)
-  {
-    sta_fit[sta_current_wheel][i] = sta_min_baseline*digit + (double)(UR((max_proportion-min_proportion)*sta_mean_prod*digit));
-    sta_surplus += sta_fit[sta_current_wheel][i];
-  }
-  // 再归一化
-  fprintf(operator_out, "初始化算子概率： ");
-  for (i = 0; i < stack_total_num; i++)
-  {
-    sta_fit[sta_current_wheel][i] = digit * sta_fit[sta_current_wheel][i]/sta_surplus;
-
-    prob_assignment(sta_fit, sta_prob, (sta_current_wheel+1)%wheel_num, i+1, sta_current_wheel, i, (sta_current_wheel+1)%wheel_num, i);
-    
-    fprintf(operator_out, "%lf ",sta_prob[(sta_current_wheel+1)%wheel_num][i+1]);
-  }
-  fprintf(operator_out, "\n ");
-
   // 将本轮个数cycle_wheel归零
   current_wheel = total_wheel%wheel_num; // 下标根据总轮加1再%wheel_num
-  sta_current_wheel = sta_total_wheel%wheel_num;
-
 } // end of initialization()
 
-void opt_output(){
-      fprintf(experimental_data, "算子,");
+/*  侦察蜂
+  实验性的，时间占比小的，有一定随机性的*/
+static void scout_fuzzing() {
 
-      fprintf(experimental_data, "bingo_time:%lld,last_time:%lld,negative_feedback:%d,\
-        total_wheel:%lld,add_in_one_round: %d,current_wheel:%d,\
-        cycle_wheel:%d,max_bingo:%d, interesting_total_conut_per_round:%d \n", 
-        bingo_time, last_time, negative_feedback, total_wheel,add_in_one_round,
-        current_wheel,cycle_wheel,max_bingo,interesting_total_conut_per_round[(current_wheel+wheel_num-1)%wheel_num]
-        );
+  u32 seed[2];
+  ck_read(dev_urandom_fd, &seed, sizeof(seed), "/dev/urandom");
+  srandom(seed[0]);
 
-      for (int p = 0; p < 16; p++)
-      {
-       fprintf(experimental_data, "选择次数：%lld,有趣值：%d,fit:%lf,fit_avg:%lf,prob:%lf, ",
-       operator_count_per_round[(current_wheel+wheel_num-1)%wheel_num][p],
-       interesting_count_per_round[(current_wheel+wheel_num-1)%wheel_num][p],
-       fitness[(current_wheel+wheel_num-1)%wheel_num][p],
-       fitness_avg[p],prod[(current_wheel)%wheel_num][p+1]);
-      }
-      fprintf(experimental_data, "\n ");
+  int i, operator_number = operator_num;
+  if (!(extras_cnt + a_extras_cnt)){  // 如果没有token
+    operator_number = operator_number - 2;
+  } 
+
+  double  surplus = 0; /* 总概率，应归一化为1*/
+  mean_prod = 1.0/operator_number;
+  min_baseline = mean_prod * min_proportion;
+
+  // 先随机分配 下限 0.3 * mean_prod
+  for (i = 0; i < operator_number; i++)
+  {
+    fitness[current_wheel][i] = min_baseline + (double)(random()%((int)((max_proportion-min_proportion)*mean_prod*digit))/digit);
+    surplus += fitness[current_wheel][i]; 
+  }
+  fprintf(experimental_data, "侦察蜂随机的概率： ");
+  // 再归一化
+  for (i = 0; i < operator_number; i++)
+  {
+  	fitness[current_wheel][i] = fitness[current_wheel][i]/surplus;
+    if (unlikely(num_of_multi < max_multi)) // 多群体计数
+    {
+      prob_assignment( current_wheel, i+1, current_wheel, i, current_wheel, i);
+      fprintf(experimental_data, "%lf ",prod[current_wheel][i+1]);
+    }else{
+      prob_assignment( (current_wheel+1)%wheel_num, i+1, current_wheel, i, (current_wheel+1)%wheel_num, i);
+      fprintf(experimental_data, "%lf ",prod[(current_wheel+1)%wheel_num][i+1]);
+    }
+    // prod[(current_wheel+1)%wheel_num][i+1] = fitness[current_wheel][i] + prod[(current_wheel+1)%wheel_num][i];// 概率给prod
+    // SAYF("prod[%u][%u]: %lf \n",current_wheel,i,prod[current_wheel][i]);
+   
+  }
+  fprintf(experimental_data, "\n ");
+
+  // 将本轮个数cycle_wheel归零
+  cycle_wheel = 0;
+  if (unlikely(num_of_multi < max_multi)) // 多群体计数
+  {
+    ++num_of_multi;
+  }
 }
 
-void sta_output(){
-        fprintf(operator_out, "堆栈,");
-      /*
-      // fprintf(operator_out, "sta_bingo_time:%lld,sta_last_time:%lld,sta_neg_feed:%d,\
-      //   sta_total_wheel:%lld,sta_add_in_one_round: %d,sta_current_wheel:%d,\
-      //   sta_cyc_wheel:%d,sta_max_bingo:%d, sta_total_magic:%d \n", 
-      //   sta_bingo_time, sta_last_time, sta_neg_feed, sta_total_wheel,sta_add_in_one_round,
-      //   sta_current_wheel,sta_cyc_wheel,sta_max_bingo,sta_total_magic[(sta_current_wheel+wheel_num-1)%wheel_num]
-      //   );
-      */
-      for (int p = 0; p < stack_total_num; p++)
+/*  跟随蜂 
+  跟随蜂 根据适应度值 和 公式 转为 雇佣蜂 */
+static void follow_updating() {
+  
+  interesting_total_conut_per_round[current_wheel] = add_in_one_round; // 该轮总新增
+  total_puppet_find += add_in_one_round; // 保存总的有趣值
+
+  int i, j, operator_number = operator_num;
+  double  total_fit_prod_fir = 0.0, /*第一次归一化和*/
+          total_fit_prod_sec = 0.0, /*第二次归一化和*/
+          offset_value = 0.0,  /*归一化补差*/
+          temp_rand; /*随机值*/
+  
+  if (!(extras_cnt + a_extras_cnt)){  // 如果没有token
+    operator_number = operator_number - 2;
+  } 
+  mean_prod = 1.0/operator_number;
+  min_baseline = mean_prod * min_proportion;
+  
+  u32 seed[2];
+  ck_read(dev_urandom_fd, &seed, sizeof(seed), "/dev/urandom");
+  srandom(seed[0]);
+
+  // f1 根据近代历史
+  for (i = 0; i < operator_number; i++)
+  {
+    temp_rand = min_baseline + (double)(random()%((int)((max_proportion-min_proportion)*mean_prod*10000))*0.0001);
+    // fprintf(experimental_data, "第一次temp_rand：%lf \n", temp_rand);
+    int k = 1;
+    if (operator_count_per_round[current_wheel][i] == 0) // 避免除0
+    {
+      operator_count_per_round[current_wheel][i] = 1;
+    }
+    fitness[current_wheel][i] = temp_rand * interesting_count_per_round[current_wheel][i] / operator_count_per_round[current_wheel][i];
+    total_fit_prod_fir += fitness[current_wheel][i];
+    // fprintf(experimental_data, "第一轮fitness[current_wheel][i]：%lf \n", fitness[current_wheel][i]);
+    for (j = 0; j < affected_wheels && j < cycle_wheel; j++) // 侦察蜂 后开始算 一轮
+    {
+      temp_rand = min_baseline + (double)(random()%((int)((max_proportion-min_proportion)*mean_prod*10000))*0.0001);
+      // fprintf(experimental_data, "第二次temp_rand：%lf \n", temp_rand);
+      // k 是轮数组参数下标
+      k = (current_wheel+wheel_num-j)%wheel_num;
+      if (operator_count_per_round[k][i] == 0) // 避免除0 
       {
-       fprintf(operator_out, "选择次数：%lld,有趣值：%d,fit:%lf,fit_avg:%lf,sta_prob:%lf, ",
-       sta_pick_num[(sta_current_wheel+wheel_num-1)%wheel_num][p],
-       sta_magic_num[(sta_current_wheel+wheel_num-1)%wheel_num][p],
-       sta_fit[(sta_current_wheel+wheel_num-1)%wheel_num][p],
-       sta_fit_avg[p],sta_prob[(sta_current_wheel)%wheel_num][p+1]);
+        operator_count_per_round[k][i] = 1;
       }
-      fprintf(operator_out, "\n ");
+      // fprintf(experimental_data, "k: %d ，operator_count_per_round[k][i] \n", k, operator_count_per_round[k][i]);
+      fitness[current_wheel][i] += weight_function_exp[j+1] * temp_rand * interesting_count_per_round[k][i] / operator_count_per_round[k][i];
+      // fprintf(experimental_data, "带上历史的fitness[current_wheel][i]：%lf \n", fitness[current_wheel][i]);
+    }
+    total_fit_prod_fir += fitness[current_wheel][i];
+  }
+  // fprintf(experimental_data, "total_fit_prod_fir：%lf \n", total_fit_prod_fir);
+
+  // 本轮没有发现新东西
+  if (interesting_total_conut_per_round[current_wheel] == 0 || total_fit_prod_fir == 0) 
+  {
+    // 记一次 蜜源 负反馈
+    negative_feedback++;
+    total_fit_prod_fir = 1.0; // 避免除0
+  }else
+  { // 发现新的东西 将当前负反馈归零
+    negative_feedback = 0;
+  }
+  // fprintf(experimental_data, "negative_feedback：%d, total_fit_prod_fir:%lf \n", negative_feedback, total_fit_prod_fir);
+
+  /* 归一化  f2考虑平均值 */
+  if (negative_feedback < limit_negative){
+    // 根据公式计算适应度
+    for (i = 0; i < operator_number; i++)
+    { // 引入适度的随机性temp_rand
+      temp_rand = min_baseline + (double)(random()%((int)((max_proportion-min_proportion)*mean_prod*10000))*0.0001);
+      // fprintf(experimental_data, "第三次temp_rand：%lf \n", temp_rand);
+      // 归一化
+      fitness[current_wheel][i] = temp_rand * modern_proportion * fitness[current_wheel][i] / total_fit_prod_fir;
+      // fprintf(experimental_data, "归一化的fitness[current_wheel][i]：%lf \n", fitness[current_wheel][i]);
+      temp_rand = min_baseline + (double)(random()%((int)((max_proportion-min_proportion)*mean_prod*10000))*0.0001);
+      // fprintf(experimental_data, "第四次temp_rand：%lf \n", temp_rand);
+      // 考虑历史均值
+      fitness[current_wheel][i] += temp_rand * fitness_avg[i] * avg_proportion;
+      // fprintf(experimental_data, "带上历史的fitness[current_wheel][i]：%lf \n", fitness[current_wheel][i]);
+      total_fit_prod_sec += fitness[current_wheel][i];
+    }
+    // fprintf(experimental_data, "total_fit_prod_sec： %lf \n", total_fit_prod_sec);
+    // 再次将fit归一化  同时按照上下限 调整fit
+    for (i = 0; i < operator_number; i++)
+    { // 归一化
+      fitness[current_wheel][i] = fitness[current_wheel][i] / total_fit_prod_sec;
+      // fprintf(experimental_data, "最后一次归一化的fitness[current_wheel][i]：%lf \n", fitness[current_wheel][i]);
+    }
+    // 拉动弱势群体
+    for (i = 0; i < operator_number; i++)
+    {
+      if (fitness[current_wheel][i] < min_baseline )
+      {
+        offset_value += min_baseline - fitness[current_wheel][i];
+        fitness[current_wheel][i] = min_baseline;
+      }
+      // fprintf(experimental_data, "扶贫后的fitness[current_wheel][i]：%lf \n", fitness[current_wheel][i]);
+    }
+    // 避免计算fitness_avg时，分子分母过大
+    int wheel_total = total_wheel > 10000 ? 10000 : total_wheel;
+    wheel_total = wheel_total == 0 ? 1:wheel_total;
+    // 削弱过强，计算prod
+    for (i = 0; i < operator_number; i++)
+    { // 削弱资源过多群体
+      if (offset_value > 0 && fitness[current_wheel][i] > min_baseline )
+      {
+        fitness[current_wheel][i] = min_baseline + (fitness[current_wheel][i]-min_baseline)*(1 - offset_value);
+      }
+      // fprintf(experimental_data, "削弱后的fitness[current_wheel][i]：%lf \n", fitness[current_wheel][i]);
+      // fprintf(experimental_data, "before cal avg， fitness_avg[%d]:%lf, wheel_total:%d, fitness[current_wheel][i]: %lf, ", i, fitness_avg[i], wheel_total, fitness[current_wheel][i]);
+      // 计算fit_avg 平均值
+      fitness_avg[i] = (fitness_avg[i]*(wheel_total-1) + fitness[current_wheel][i])/wheel_total;
+      // SAYF("fitness_avg: %lf ", fitness_avg[i]);
+      // fprintf(experimental_data, "after cal avg，fitness_avg[%d]:%lf, wheel_total:%d, fitness[current_wheel][i]: %lf, ", i, fitness_avg[i], wheel_total, fitness[current_wheel][i]);
+      
+      // 下一代概率即为上一代的fit，prod[][0]=0，顶部为1，记录下标从1开始
+      prob_assignment( (current_wheel+1)%wheel_num, i+1, current_wheel, i, (current_wheel+1)%wheel_num, i);
+      // prod[(current_wheel+1)%wheel_num][i+1] = fitness[current_wheel][i] + prod[(current_wheel+1)%wheel_num][i];
+    }
+    cycle_wheel++; // 当前轮加1
+  } else { // 如果蜜源limit 到达上限 
+    scout_fuzzing(); // 去 侦察蜂
+  }
+
+  /* 将本轮结果保存至文件中 */
+  record_experimental_data();
+
+  // 将涉及fit 计算完后 更新 current_wheel 和 total_wheel
+  total_wheel++; // 总轮数加1 
+  current_wheel = total_wheel%wheel_num; // 下标根据总轮 %wheel_num
+
+  //将 下一轮计数归零
+  for(int k =0;k<operator_num;k++){
+    operator_count_per_round[current_wheel][k] = 0; // 选中
+    interesting_count_per_round[current_wheel][k] = 0; // 有趣值
+  } 
+
+  // 将 10s区间新增 归零
+  add_in_one_round = 0;
 
 }
 
@@ -7284,19 +7288,20 @@ havoc_stage:
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
     
-    // 保存运行前时间
-    before_running_time = get_cur_time_us();
-    // 根据概率选择堆栈大小
-    sta_temp = select_algorithm( 0, sta_prob, sta_current_wheel);
-    u32 use_stacking = sta_depth[sta_temp];
-    sta_pick_num[sta_current_wheel][sta_temp] += 1; // 选择计数++
+    // use_stacking，堆栈大小。相当于每一轮stage中具体的变换由多次小变化叠加产生。
+    // 1 << (1 + UR(7)) ,即 2、4、8、16、32、64、128
+    u32 use_stacking = 1 << (1 + UR(HAVOC_STACK_POW2));
 
+    // 先将算子队列大小设置为8，看看实验结果
+    // u32 use_stacking = 8;
 
     stage_cur_val = use_stacking;
  
     for (i = 0; i < use_stacking; i++) {
-
-      switch (select_algorithm( ((extras_cnt + a_extras_cnt) ? 0 : 2), prod, current_wheel )) {
+      // 使用select_algorithm 根据蜂群计算得到的概率来选择
+      switch (select_algorithm( (extras_cnt + a_extras_cnt) ? 2 : 0) ) {
+      // 随机选择变异策略
+      // switch (UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0))) {
 						case 0:
 							/* Flip a single bit somewhere. Spooky! */
 							FLIP_BIT(out_buf, UR(temp_len << 3));
@@ -7648,17 +7653,21 @@ havoc_stage:
             }
 
 					}
+
     }
     
     /* 轮回次数加1 */
     tmp_pilot_time += 1;
+
+    // 保存运行前时间
+    // before_running_time = get_cur_time();
 
     // 内层循环叠加变换use_stacking次后调用common_fuzz_stuff函数对变换后的结果进行fuzz
     if (common_fuzz_stuff(argv, out_buf, temp_len))
       goto abandon_entry;
     
     // 保存运行后时间
-    after_running_time = get_cur_time_us();
+    after_running_time = get_cur_time();
 
     /* out_buf might have been mangled a bit, so let's restore it to its
        original size and shape.
@@ -7674,153 +7683,71 @@ havoc_stage:
        说明发现了新路径，更新stage_max、perf_score、havoc_queued。
         */
     if (queued_paths != havoc_queued) {
+
       if (perf_score <= HAVOC_MAX_MULT * 100) {
         stage_max  *= 2;
         perf_score *= 2;
       }
+
       havoc_queued = queued_paths;
+
     }
 
     // newly_added 一次堆栈的业绩
     u32 newly_added = queued_paths + unique_crashes - this_round_paths - this_round_crashes;
     add_in_one_round += newly_added;
-    sta_add_in_one_round += newly_added;
     
     /* 有趣值计数 */
     // 如果产生了新增，给当前堆栈算子计上新增，算子 10s 总结一次kpi
     if (unlikely(newly_added > 0 ))
     {
-      sta_magic_num[sta_current_wheel][sta_temp] += newly_added; // sta有趣值计数++
+      // fprintf(operator_out, "%lld,",total_wheel);
       for(k =0; k< operator_num; k++){
         if ( operator_per_pick_count[k] > 0 )// 是本次堆栈中的算子
         { // 本轮算子有趣值 计数
           interesting_count_per_round[current_wheel][k] += newly_added;
         }
+        // fprintf(operator_out, "%d,", operator_per_pick_count[k] > 0? newly_added : 0);
       } 
+      // fprintf(operator_out, "\n");
     }
 
-    /* 招募跟随蜂的时间间隙 */
-    if (unlikely(after_running_time - bingo_time > adjust_gap))
+    if (after_running_time - bingo_time > adjust_gap)
     {
       bingo_time = after_running_time;
-      max_bingo += operator_gap ;
+      max_bingo += 10 ;
+      SAYF("\n max_bingo: %d \n", max_bingo);
     }
-    /* 堆栈 招募跟随蜂的时间间隙 */
-    if (unlikely(after_running_time - sta_bingo_time > adjust_gap))
-    {
-      sta_bingo_time = after_running_time;
-      sta_max_bingo += sta_gap ;
-    }
-
+    
+    
     this_round_paths = queued_paths;
     this_round_crashes = unique_crashes;
 
     /* 调用次数计数 */
+    // 累加 堆栈调用计数， 加至本轮
     for(k =0;k< operator_num;k++){
       //将 堆栈 加到 本轮内， 并把 堆栈计数 归零
       operator_count_per_round[current_wheel][k] += operator_per_pick_count[k];
       operator_per_pick_count[k] = 0;
     }
 
-    /* 
-      算子 侦察蜂
+    /* 10s一次记录 !!! 一个值得考量的点
+      处理本轮循环
     */
     if (unlikely(num_of_multi < max_multi))
     {
-      if (unlikely(after_running_time - last_time > 10*1000*1000)) // 算子 多群体 侦察蜂
+      if (unlikely(after_running_time - last_time > 10*1000)) // 多群体
       {
-        fprintf(experimental_data, "前 第 %d 次执行次数, current_wheel: %d \n", num_of_multi, current_wheel);
-        for (int ol = 0; ol < 16; ol++)
-        {
-          fprintf(experimental_data, "%lld, ", operator_count_per_round[current_wheel][ol]);
-        }
-        fprintf(experimental_data, "\n");
-
-        scout(operator_num - ((extras_cnt + a_extras_cnt)?0:2), fitness, prod, current_wheel, &num_of_multi, max_multi);
-        cycle_wheel = 0;
+        scout_fuzzing();
         last_time  = after_running_time;
-
-        if (num_of_multi == max_multi)
-        {
-          opt_first_follow = 1;
-        }
-        
-
-        fprintf(experimental_data, "num_of_multi: %d, max_multi: %d \n ", num_of_multi, max_multi);
       }
-    }
-
-    // 算子 招募跟随蜂
-    if (unlikely(after_running_time - last_time > max_bingo*1000*1000 && num_of_multi == max_multi)) 
+    }else if (unlikely(after_running_time - last_time > max_bingo*1000)) // 招募跟随蜂
     {
-      interesting_total_conut_per_round[current_wheel] = add_in_one_round; // 该轮总新增
-
-      follow(&current_wheel,operator_num-((extras_cnt + a_extras_cnt)?0:2), 
-      operator_count_per_round, fitness, interesting_count_per_round, &cycle_wheel,&negative_feedback, 
-      fitness_avg, &total_wheel, prod, interesting_total_conut_per_round, limit_negative);
-      
+      follow_updating();
       last_time  = after_running_time;
-
-      // 输出信息
-      // opt_output();
-
-      // 将 10s区间新增 归零
-      add_in_one_round = 0;
     }
 
-    /* 
-      堆栈 侦察蜂 跟随蜂
-    */
-    if (unlikely(sta_multi_num < sta_multi_max))
-    {
-      if (unlikely(after_running_time - sta_last_time > 30*1000*1000)) // 堆栈 多群体 侦察蜂
-      {
-        fprintf(operator_out, "第 %d 次执行次数: ,sta_current_wheel: %d \n", sta_multi_num, sta_current_wheel);
-        for (int ol = 0; ol < 18; ol++)
-        {
-          fprintf(operator_out, "%lld,", sta_pick_num[sta_current_wheel][ol]);
-        }
-        fprintf(operator_out, "\n");
-
-
-        sta_last_time  = after_running_time;
-        // 侦察蜂
-        scout(stack_total_num, sta_fit, sta_prob, sta_current_wheel, &sta_multi_num, sta_multi_max);
-        sta_cyc_wheel = 0;
-        if (sta_multi_num == sta_multi_max)
-        {
-          sta_first_follow = 1;
-        }
-
-
-        fprintf(operator_out, "堆栈侦察蜂 sta_multi_num: %d, sta_multi_max: %d \n ", sta_multi_num, sta_multi_max);
-        fprintf(operator_out, "堆栈选择概率 ,");
-        for (int p = 0; p < stack_total_num; p++)
-        {
-          fprintf(operator_out, "%lf,", sta_prob[sta_current_wheel][p+1]);
-        }
-        fprintf(operator_out, "\n ");
-      }
-    }
-
-    // 跟随蜂
-    if (unlikely(  after_running_time - sta_last_time > sta_max_bingo*1000*1000 && sta_multi_num == sta_multi_max )) // 堆栈 招募跟随蜂
-    {
-      sta_total_magic[sta_current_wheel] = sta_add_in_one_round; // 该轮总新增
-
-      follow(&sta_current_wheel, stack_total_num, sta_pick_num, sta_fit, sta_magic_num, 
-      &sta_cyc_wheel, &sta_neg_feed, sta_fit_avg, &sta_total_wheel, sta_prob, sta_total_magic, sta_limit);
-
-      sta_last_time  = after_running_time;
-
-      // 输出信息
-      // sta_output();
-      
-      // 将 10s区间新增 归零
-      sta_add_in_one_round = 0;
-    }
-
-  } // end for loop
+  }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
@@ -7961,8 +7888,21 @@ static u8 fuzz_one(char** argv) {
   // 先实验佐证 不同的算子效率不同
   key_val_lv = gather_honey_fuzzing(argv);
 
-	return key_val_lv;	
+  /*
+	if (limit_time_sig == 0)
+		key_val_lv = normal_fuzz_one(argv);
+	else
+	{
+		if (key_module == 0)
+			key_val_lv = pilot_fuzzing(argv);
+		else if (key_module == 1)
+			key_val_lv = core_fuzzing(argv);
+		else if (key_module == 2)
+			pso_updating();
+	}
+  */
 
+	return key_val_lv;	
 }
 
 
