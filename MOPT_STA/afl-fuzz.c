@@ -151,7 +151,7 @@ int key_lv = 0;
 #define stack_total_num 18 /* 堆栈数 */
 #define operator_gap 10 /* 算子去跟随蜂增加的时间间隙 */
 #define sta_gap 10 /*  堆栈去跟随蜂增加的时间间隙 */
-#define max_generation 1000 // 计算平均值时考虑的最大代数
+#define max_generation 6000 // 计算平均值时考虑的最大代数
 
 u64   last_time = 0,      /* 上次写入时间 */
       before_running_time, 
@@ -193,7 +193,7 @@ u8  max_multi = 12, /* 算子多群体上限 */
     sta_total_magic[wheel_num], /* 每轮堆栈总有趣值计数 */
     //361,516,461,270,191,137,79,73,41,44,32,25,16,21,14,19,18,18, 16,  11, 18,17,
     // 2   8   14  20  26  32 38 44 50 56 62 68 74 80 86 92 98 104,110,116,122,128 
-    sta_depth[stack_total_num] = {2,4,6,8,10,12,14,16,18,20,26,32,40,50,64,80,104,128};
+    sta_depth[stack_total_num] = {2,4,6,8,10,12,14,16,20,26,32,40,50,64,80,104,128,142};
 
 double  fitness[wheel_num][operator_num], /*适应度值*/
         fitness_avg[operator_num], /*各算子的平均适用度值*/
